@@ -13,7 +13,9 @@ optdepends=(
     'steam: required to run FS25'
 )
 backup=('etc/udev/rules.d/99-fs25-ffb.rules')
-source=("git+https://github.com/RobinNotHood/Farming-Simulator-25---FFB-Mod-Linux.git#branch=main")
+# Tracks the repo's default branch. For a reproducible release, pin to a
+# tag instead: #tag=v0.1.0 (append with `&` if combining with other frags).
+source=("git+https://github.com/RobinNotHood/Farming-Simulator-25---FFB-Mod-Linux.git")
 sha256sums=('SKIP')
 
 prepare() {

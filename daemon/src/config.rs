@@ -146,21 +146,17 @@ impl Config {
             cfg.save_to(&path)?;
             return Ok((cfg, path));
         }
-        let data = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading {:?}", path))?;
-        let cfg: Config = toml::from_str(&data)
-            .with_context(|| format!("parsing {:?}", path))?;
+        let data = std::fs::read_to_string(&path).with_context(|| format!("reading {:?}", path))?;
+        let cfg: Config = toml::from_str(&data).with_context(|| format!("parsing {:?}", path))?;
         Ok((cfg, path))
     }
 
     pub fn save_to(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {:?}", parent))?;
+            std::fs::create_dir_all(parent).with_context(|| format!("creating {:?}", parent))?;
         }
         let data = toml::to_string_pretty(self)?;
-        std::fs::write(path, data)
-            .with_context(|| format!("writing {:?}", path))?;
+        std::fs::write(path, data).with_context(|| format!("writing {:?}", path))?;
         Ok(())
     }
 }

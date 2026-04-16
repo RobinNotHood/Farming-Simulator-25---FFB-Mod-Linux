@@ -20,14 +20,11 @@ egui_plot = "0.27"
 # FFB / input
 evdev = "0.12"
 input-linux = "0.7"
-nix = { version = "0.28", features = ["fs", "ioctl"] }
-
-# Filesystem watch
-notify = "6"
+input-linux-sys = "0.9"
+libc = "0.2"
 
 # Serialization / config
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 toml = "0.8"
 
 # Logging
@@ -36,13 +33,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Misc
 anyhow = "1"
-thiserror = "1"
 once_cell = "1"
-crossbeam-channel = "0.5"
 directories = "5"
 byteorder = "1"
 parking_lot = "0.12"
-rand = "0.8"
 
 [profile.release]
 lto = "thin"

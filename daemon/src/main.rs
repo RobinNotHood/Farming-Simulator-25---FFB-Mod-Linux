@@ -40,7 +40,7 @@ fn main() -> Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .with_target(true)
-        .with_writer(logging::TeeWriter::new(std::io::stderr()))
+        .with_writer(logging::RingTee::new())
         .init();
 
     let args = parse_args();

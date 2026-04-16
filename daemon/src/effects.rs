@@ -14,10 +14,10 @@ use crate::telemetry::Telemetry;
 /// All outputs are normalized. Positive constant force = pull right.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct EffectOutput {
-    pub constant: f32,        // -1..1
-    pub spring_strength: f32, // 0..1
-    pub spring_center: f32,   // -1..1
-    pub damper: f32,          // 0..1
+    pub constant: f32,         // -1..1
+    pub spring_strength: f32,  // 0..1
+    pub spring_center: f32,    // -1..1
+    pub damper: f32,           // 0..1
     pub rumble_magnitude: f32, // 0..1
     pub rumble_period_ms: u16,
     pub torque_estimate_nm: f32, // debug only
@@ -58,12 +58,19 @@ impl EffectEngine {
         // around 30 km/h. On slow tractors 100% spring above 30 km/h feels
         // natural; the user can still override with the strength slider.
         // -------------------------------------------------------------
-        let speed_factor = smoothstep(cfg.speed_curve_start_kmh, cfg.speed_curve_max_kmh, speed_kmh);
-        let ps_factor = if t.has_power_steering() { 1.0 } else { cfg.no_power_steer_boost };
-        let mass_factor = 1.0
-            + (t.total_mass / 10_000.0).clamp(0.0, 2.0) * cfg.mass_spring_scale;
-        let spring_strength = (cfg.spring_gain * speed_factor * ps_factor * mass_factor)
-            .clamp(0.0, 1.0);
+        let speed_factor = smoothstep(
+            cfg.speed_curve_start_kmh,
+            cfg.speed_curve_max_kmh,
+            speed_kmh,
+        );
+        let ps_factor = if t.has_power_steering() {
+            1.0
+        } else {
+            cfg.no_power_steer_boost
+        };
+        let mass_factor = 1.0 + (t.total_mass / 10_000.0).clamp(0.0, 2.0) * cfg.mass_spring_scale;
+        let spring_strength =
+            (cfg.spring_gain * speed_factor * ps_factor * mass_factor).clamp(0.0, 1.0);
 
         // Shift center toward downhill when on a slope, scaled by roll.
         let slope_offset = (t.roll * cfg.slope_gain).clamp(-cfg.slope_max, cfg.slope_max);
@@ -78,13 +85,13 @@ impl EffectEngine {
         let raw_lat = t.lateral_accel * 0.1 + (t.slip_front - t.slip_rear) * 0.8;
         self.smoothed_lateral = lerp(self.smoothed_lateral, raw_lat, (dt * 12.0).min(1.0));
 
-        let lat_const =
-            (self.smoothed_lateral * cfg.lateral_gain * speed_factor).clamp(-1.0, 1.0);
+        let lat_const = (self.smoothed_lateral * cfg.lateral_gain * speed_factor).clamp(-1.0, 1.0);
 
         // -------------------------------------------------------------
         // Damper: resists rapid steering input, scales with implement mass
         // -------------------------------------------------------------
-        let implement_factor = 1.0 + (t.attached_mass / 5_000.0).clamp(0.0, 3.0) * cfg.implement_damper_scale;
+        let implement_factor =
+            1.0 + (t.attached_mass / 5_000.0).clamp(0.0, 3.0) * cfg.implement_damper_scale;
         let damper = (cfg.damper_gain * implement_factor).clamp(0.0, 1.0);
 
         // -------------------------------------------------------------
@@ -178,9 +185,10 @@ mod tests {
     use crate::config::TuningConfig;
 
     fn default_tele() -> Telemetry {
-        let mut t = Telemetry::default();
-        t.flags = 0x01 | 0x04; // in vehicle, has power steering
-        t
+        Telemetry {
+            flags: 0x01 | 0x04, // in vehicle, has power steering
+            ..Telemetry::default()
+        }
     }
 
     #[test]
@@ -203,13 +211,18 @@ mod tests {
         let low = engine.compute(&t, &cfg, 0.016).spring_strength;
 
         t.speed_mps = 15.0; // ~54 km/h
-        // warm up the smoother
+                            // warm up the smoother
         for _ in 0..60 {
             engine.compute(&t, &cfg, 0.016);
         }
         let high = engine.compute(&t, &cfg, 0.016).spring_strength;
 
-        assert!(high > low, "expected spring at speed > at rest (got {} vs {})", high, low);
+        assert!(
+            high > low,
+            "expected spring at speed > at rest (got {} vs {})",
+            high,
+            low
+        );
     }
 
     #[test]

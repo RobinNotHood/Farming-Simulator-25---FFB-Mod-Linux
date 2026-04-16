@@ -33,7 +33,11 @@ impl Check {
             fix: None,
         }
     }
-    pub fn warn(name: impl Into<String>, detail: impl Into<String>, fix: impl Into<String>) -> Self {
+    pub fn warn(
+        name: impl Into<String>,
+        detail: impl Into<String>,
+        fix: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             severity: Severity::Warn,
@@ -41,7 +45,11 @@ impl Check {
             fix: Some(fix.into()),
         }
     }
-    pub fn fail(name: impl Into<String>, detail: impl Into<String>, fix: impl Into<String>) -> Self {
+    pub fn fail(
+        name: impl Into<String>,
+        detail: impl Into<String>,
+        fix: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             severity: Severity::Fail,
@@ -52,7 +60,8 @@ impl Check {
 }
 
 pub fn run_cli_report() -> Result<()> {
-    let (cfg, cfg_path) = Config::load(None).unwrap_or_else(|_| (Config::default(), PathBuf::from("<none>")));
+    let (cfg, cfg_path) =
+        Config::load(None).unwrap_or_else(|_| (Config::default(), PathBuf::from("<none>")));
     println!("fs25-ffb diagnostic report");
     println!("  config: {:?}", cfg_path);
     println!();
@@ -77,8 +86,12 @@ pub fn run_cli_report() -> Result<()> {
         }
     }
     println!();
-    println!("summary: {} OK, {} warnings, {} failures",
-             checks.len() - warn_count - fail_count, warn_count, fail_count);
+    println!(
+        "summary: {} OK, {} warnings, {} failures",
+        checks.len() - warn_count - fail_count,
+        warn_count,
+        fail_count
+    );
     if fail_count > 0 {
         std::process::exit(1);
     }
@@ -86,22 +99,22 @@ pub fn run_cli_report() -> Result<()> {
 }
 
 pub fn run_all(cfg: &Config) -> Vec<Check> {
-    let mut out = Vec::new();
-    out.push(check_kernel_version());
-    out.push(check_user_in_input_group());
-    out.push(check_dev_input_readable());
-    out.push(check_udev_rule_installed());
-    out.push(check_device_visible(cfg));
-    out.push(check_ffb_capable(cfg));
-    out.push(check_steam_compatdata(cfg));
-    out.push(check_mod_installed(cfg));
-    out.push(check_telemetry_fresh(cfg));
-    out.push(check_boxflat_running());
-    out.push(check_proton_version(cfg));
-    out.push(check_conflicting_processes());
-    out.push(check_sdl_hidapi_env());
-    out.push(check_cpu_governor());
-    out
+    vec![
+        check_kernel_version(),
+        check_user_in_input_group(),
+        check_dev_input_readable(),
+        check_udev_rule_installed(),
+        check_device_visible(cfg),
+        check_ffb_capable(cfg),
+        check_steam_compatdata(cfg),
+        check_mod_installed(cfg),
+        check_telemetry_fresh(cfg),
+        check_boxflat_running(),
+        check_proton_version(cfg),
+        check_conflicting_processes(),
+        check_sdl_hidapi_env(),
+        check_cpu_governor(),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -110,8 +123,11 @@ pub fn run_all(cfg: &Config) -> Vec<Check> {
 
 fn check_kernel_version() -> Check {
     let Ok(out) = Command::new("uname").arg("-r").output() else {
-        return Check::warn("kernel-version", "could not run `uname -r`",
-                           "install coreutils");
+        return Check::warn(
+            "kernel-version",
+            "could not run `uname -r`",
+            "install coreutils",
+        );
     };
     let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
     // Moza R5 FFB requires kernel 6.12.24, 6.13.12, 6.14.3 or 6.15+ (via
@@ -129,7 +145,9 @@ fn check_kernel_version() -> Check {
 }
 
 fn parse_kver(s: &str) -> Option<(u32, u32, u32)> {
-    let mut it = s.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty());
+    let mut it = s
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|p| !p.is_empty());
     let a: u32 = it.next()?.parse().ok()?;
     let b: u32 = it.next()?.parse().ok()?;
     let c: u32 = it.next().and_then(|p| p.parse().ok()).unwrap_or(0);
@@ -215,24 +233,35 @@ fn check_ffb_capable(cfg: &Config) -> Check {
                     "device does not advertise any FFB bits",
                     "check kernel module (hid-universal-pidff / hid-mozawheel / hid-logitech)",
                 ),
-                Some(set) if set.iter().count() == 0 => Check::fail(
-                    "ffb-capable",
-                    "device advertises FF event type but zero effect types",
-                    "upgrade kernel to 6.14+ or install hid-universal-pidff dkms",
-                ),
-                Some(set) => Check::ok(
-                    "ffb-capable",
-                    format!("supports: {:?}", set.iter().collect::<Vec<_>>()),
-                ),
+                Some(set) => {
+                    let list: Vec<_> = set.iter().collect();
+                    if list.is_empty() {
+                        Check::fail(
+                            "ffb-capable",
+                            "device advertises FF event type but zero effect types",
+                            "upgrade kernel to 6.14+ or install hid-universal-pidff dkms",
+                        )
+                    } else {
+                        Check::ok("ffb-capable", format!("supports: {:?}", list))
+                    }
+                }
             }
         }
-        Err(_) => Check::warn("ffb-capable", "no device found to query", "see `device` above"),
+        Err(_) => Check::warn(
+            "ffb-capable",
+            "no device found to query",
+            "see `device` above",
+        ),
     }
 }
 
 fn check_steam_compatdata(cfg: &Config) -> Check {
     let Ok(home) = std::env::var("HOME") else {
-        return Check::fail("compatdata", "HOME not set", "run under a real user session");
+        return Check::fail(
+            "compatdata",
+            "HOME not set",
+            "run under a real user session",
+        );
     };
     let appid = cfg.paths.fs25_steam_appid;
     let candidates = [
@@ -285,7 +314,9 @@ fn check_telemetry_fresh(cfg: &Config) -> Check {
             "start FS25 with the mod active; the file is created on first vehicle",
         );
     };
-    let age = meta.modified().ok()
+    let age = meta
+        .modified()
+        .ok()
         .and_then(|t| t.elapsed().ok())
         .map(|d| d.as_secs_f32())
         .unwrap_or(9999.0);

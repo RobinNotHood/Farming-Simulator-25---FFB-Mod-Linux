@@ -54,12 +54,14 @@ impl Telemetry {
     pub fn reversing(&self) -> bool {
         self.flags & 0x08 != 0
     }
+    #[allow(dead_code)]
     pub fn airborne(&self) -> bool {
         self.flags & 0x10 != 0
     }
 }
 
 /// Parse a raw 104-byte frame. Returns Err on torn writes (bad magic).
+#[allow(clippy::field_reassign_with_default)] // 27-field literal is worse
 pub fn parse_frame(buf: &[u8]) -> Result<Telemetry> {
     if buf.len() < FRAME_SIZE {
         return Err(anyhow!("frame too short: {} bytes", buf.len()));
@@ -133,6 +135,7 @@ impl TelemetryReader {
         }
     }
 
+    #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -170,6 +173,7 @@ impl TelemetryReader {
 }
 
 /// Stale if no new sequence for > 500ms.
+#[allow(dead_code)]
 pub fn is_stale(last_update: Option<Instant>) -> bool {
     match last_update {
         Some(t) => t.elapsed() > Duration::from_millis(500),

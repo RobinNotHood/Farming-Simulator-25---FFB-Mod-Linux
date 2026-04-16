@@ -172,9 +172,18 @@ impl App {
                         ui.label(format!("In vehicle:     {}", yn(t.in_vehicle())));
                         ui.label(format!("Speed:          {:.1} km/h", t.speed_mps * 3.6));
                         ui.label(format!("Steering:       {:+.2}", t.steering_angle));
-                        ui.label(format!("Lateral accel:  {:+.2} m/s\u{00b2}", t.lateral_accel));
-                        ui.label(format!("Slip F / R:     {:.2} / {:.2}", t.slip_front, t.slip_rear));
-                        ui.label(format!("Pitch / Roll:   {:+.2} / {:+.2} rad", t.pitch, t.roll));
+                        ui.label(format!(
+                            "Lateral accel:  {:+.2} m/s\u{00b2}",
+                            t.lateral_accel
+                        ));
+                        ui.label(format!(
+                            "Slip F / R:     {:.2} / {:.2}",
+                            t.slip_front, t.slip_rear
+                        ));
+                        ui.label(format!(
+                            "Pitch / Roll:   {:+.2} / {:+.2} rad",
+                            t.pitch, t.roll
+                        ));
                         ui.label(format!("Ground hard:    {:.2}", t.ground_hardness));
                         ui.label(format!("Ground rough:   {:.2}", t.ground_roughness));
                         ui.label(format!("RPM (norm):     {:.2}", t.rpm));
@@ -196,12 +205,24 @@ impl App {
         ui.heading("Live output");
 
         let hist = &s.history;
-        let steering: PlotPoints = hist.steering.iter().enumerate()
-            .map(|(i, v)| [i as f64, *v as f64]).collect();
-        let constant: PlotPoints = hist.output_constant.iter().enumerate()
-            .map(|(i, v)| [i as f64, *v as f64]).collect();
-        let spring: PlotPoints = hist.output_spring.iter().enumerate()
-            .map(|(i, v)| [i as f64, *v as f64]).collect();
+        let steering: PlotPoints = hist
+            .steering
+            .iter()
+            .enumerate()
+            .map(|(i, v)| [i as f64, *v as f64])
+            .collect();
+        let constant: PlotPoints = hist
+            .output_constant
+            .iter()
+            .enumerate()
+            .map(|(i, v)| [i as f64, *v as f64])
+            .collect();
+        let spring: PlotPoints = hist
+            .output_spring
+            .iter()
+            .enumerate()
+            .map(|(i, v)| [i as f64, *v as f64])
+            .collect();
 
         Plot::new("ffb-plot")
             .height(220.0)
@@ -260,17 +281,46 @@ impl App {
 
             ui.heading("Global");
             any |= slider(ui, "Master gain", &mut c.tuning.master_gain, 0.0, 2.0);
-            any |= slider(ui, "Output rate (Hz)",
-                          &mut (c.tuning.output_hz as f32), 60.0, 500.0);
+            any |= slider(
+                ui,
+                "Output rate (Hz)",
+                &mut (c.tuning.output_hz as f32),
+                60.0,
+                500.0,
+            );
             // Cast back - ugly but keeps slider signature uniform.
 
             ui.separator();
             ui.heading("Centering spring");
             any |= slider(ui, "Spring gain", &mut c.tuning.spring_gain, 0.0, 1.5);
-            any |= slider(ui, "Speed ramp start (km/h)", &mut c.tuning.speed_curve_start_kmh, 0.0, 30.0);
-            any |= slider(ui, "Speed ramp max (km/h)", &mut c.tuning.speed_curve_max_kmh, 10.0, 80.0);
-            any |= slider(ui, "Mass -> spring scale", &mut c.tuning.mass_spring_scale, 0.0, 1.0);
-            any |= slider(ui, "Boost w/o power steering", &mut c.tuning.no_power_steer_boost, 1.0, 3.0);
+            any |= slider(
+                ui,
+                "Speed ramp start (km/h)",
+                &mut c.tuning.speed_curve_start_kmh,
+                0.0,
+                30.0,
+            );
+            any |= slider(
+                ui,
+                "Speed ramp max (km/h)",
+                &mut c.tuning.speed_curve_max_kmh,
+                10.0,
+                80.0,
+            );
+            any |= slider(
+                ui,
+                "Mass -> spring scale",
+                &mut c.tuning.mass_spring_scale,
+                0.0,
+                1.0,
+            );
+            any |= slider(
+                ui,
+                "Boost w/o power steering",
+                &mut c.tuning.no_power_steer_boost,
+                1.0,
+                3.0,
+            );
 
             ui.separator();
             ui.heading("Lateral force");
@@ -279,7 +329,13 @@ impl App {
             ui.separator();
             ui.heading("Damper");
             any |= slider(ui, "Damper gain", &mut c.tuning.damper_gain, 0.0, 1.0);
-            any |= slider(ui, "Implement mass -> damper", &mut c.tuning.implement_damper_scale, 0.0, 1.0);
+            any |= slider(
+                ui,
+                "Implement mass -> damper",
+                &mut c.tuning.implement_damper_scale,
+                0.0,
+                1.0,
+            );
 
             ui.separator();
             ui.heading("Surface rumble");
@@ -394,7 +450,7 @@ impl App {
                 let cfg = self.cfg.lock().clone();
                 let checks = troubleshoot::run_all(&cfg);
                 let text = format_report(&checks);
-                ui.ctx().copy_text(text);
+                ui.output_mut(|o| o.copied_text = text);
             }
         });
         if self.last_checks.is_empty() {
@@ -497,5 +553,9 @@ impl App {
 }
 
 fn yn(b: bool) -> &'static str {
-    if b { "yes" } else { "no" }
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
 }

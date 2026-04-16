@@ -27,6 +27,7 @@ pub struct DeviceInfo {
 #[derive(Clone)]
 pub struct Heartbeat {
     pub sequence: u32,
+    #[allow(dead_code)]
     pub updated: Instant,
 }
 

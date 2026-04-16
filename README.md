@@ -1,5 +1,8 @@
 # Farming Simulator 25 - Force Feedback Mod (Linux)
 
+[![CI](https://github.com/RobinNotHood/Farming-Simulator-25---FFB-Mod-Linux/actions/workflows/ci.yml/badge.svg)](https://github.com/RobinNotHood/Farming-Simulator-25---FFB-Mod-Linux/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 A force-feedback enhancer for Farming Simulator 25 on Linux / CachyOS.
 FS25's stock FFB is a weak centering spring. This project replaces it with
 rich, speed-aware, physics-driven feedback: real centering that grows with

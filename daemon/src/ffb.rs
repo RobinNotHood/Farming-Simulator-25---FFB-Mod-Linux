@@ -1,34 +1,38 @@
 //! Low-level FFB driver. Uploads effects via the Linux kernel `evdev`
 //! FF_UPLOAD ioctl and starts/stops them with EV_FF write events.
 //!
-//! We use the `input-linux` crate for the ioctl bindings because `evdev`
-//! 0.12 does not expose effect upload. The `evdev` crate is still used for
-//! enumeration (nicer API for device metadata).
+//! We use `input_linux::EvdevHandle` for the `EVIOCSFF` ioctl because
+//! the `evdev` crate does not expose effect upload. The `evdev` crate
+//! is still used for enumeration (nicer API for device metadata).
+//!
+//! `input_linux_sys::ff_effect` stores effect-kind-specific data in a
+//! `[u64; 4]` union-like buffer. We access it through the typed
+//! accessors on `ff_effect_union` (`.constant_mut()`, `.condition_mut()`,
+//! `.periodic_mut()`, `.rumble_mut()`).
 //!
 //! Kernel reference: Documentation/input/ff.rst.
 //!
 //! Effects we allocate up-front and re-use:
-//!   * effect_constant : FF_CONSTANT  -- lateral force pull
-//!   * effect_spring   : FF_SPRING    -- centering torque
-//!   * effect_damper   : FF_DAMPER    -- steering-rate damping
-//!   * effect_rumble   : FF_PERIODIC  -- surface texture (sine wave)
-//!   * effect_kick     : FF_CONSTANT  -- short collision one-shot
+//!
+//! * effect_constant : FF_CONSTANT  -- lateral force pull
+//! * effect_spring   : FF_SPRING    -- centering torque
+//! * effect_damper   : FF_DAMPER    -- steering-rate damping
+//! * effect_rumble   : FF_PERIODIC  -- surface texture (sine wave)
+//! * effect_kick     : FF_CONSTANT  -- short collision one-shot
 //!
 //! On devices that lack FF_SPRING we synthesise a spring from FF_CONSTANT
-//! + telemetry steering position; same for FF_DAMPER. This keeps behaviour
-//! consistent across wheel vendors.
+//! plus telemetry steering position; same for FF_DAMPER. That keeps the
+//! behaviour consistent across wheel vendors.
 
 use crate::clap_lite::TestEffect;
 use crate::config::DeviceHint;
 use crate::effects::EffectOutput;
 use crate::shared::DeviceInfo;
 use anyhow::{anyhow, Context, Result};
-use input_linux::{
-    sys as raw, AbsoluteAxis, EventKind, ForceFeedbackKind,
-};
-use nix::ioctl_write_ptr;
+use input_linux::EvdevHandle;
+use input_linux_sys as sys;
 use std::fs::{File, OpenOptions};
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -41,6 +45,7 @@ pub struct FfbDevice {
     id_spring: Option<i16>,
     id_damper: Option<i16>,
     id_rumble: Option<i16>,
+    #[allow(dead_code)] // reserved for collision one-shot (future use)
     id_kick: Option<i16>,
     // last values written (to debounce unchanged uploads)
     last_constant: i16,
@@ -48,22 +53,21 @@ pub struct FfbDevice {
     last_damper: u16,
     last_rumble_mag: u16,
     last_rumble_period: u16,
-    last_kick: i16,
 }
 
 impl FfbDevice {
     /// Open a device by hint and pre-upload the five effect slots. Returns
     /// an error if the kernel rejects uploads (e.g. wrong driver, no FF bits).
     pub fn open(hint: &DeviceHint) -> Result<Self> {
-        let (path, dev) = crate::device::find_device(hint)?;
-        let info = crate::device::describe(&path, &dev);
-        drop(dev); // re-open RW
+        let (path, info) = crate::device::open_matching(hint)?;
 
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .open(&path)
-            .with_context(|| format!("opening {:?} for RW (need udev rule or input group)", path))?;
+            .with_context(|| {
+                format!("opening {:?} for RW (need udev rule or input group)", path)
+            })?;
 
         let mut d = Self {
             path,
@@ -79,11 +83,10 @@ impl FfbDevice {
             last_damper: 0,
             last_rumble_mag: 0,
             last_rumble_period: 0,
-            last_kick: 0,
         };
 
         // Set master gain to 100%; user tunes via our own master_gain slider.
-        // Do this *before* uploading so effect strengths reflect the raw data.
+        // Do this *before* uploading so effect strengths reflect raw data.
         let _ = d.set_gain(0xFFFF);
         let _ = d.set_autocenter(0);
 
@@ -110,13 +113,13 @@ impl FfbDevice {
         &self.info
     }
 
+    #[allow(dead_code)]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Push the current effect target. Called at output_hz.
+    /// Push the current effect target. Called at `output_hz`.
     pub fn apply(&mut self, out: &EffectOutput) -> Result<()> {
-        // FF_CONSTANT
         if let Some(id) = self.id_constant {
             let lvl = scale_to_i16(out.constant);
             if (lvl - self.last_constant).abs() > 150 {
@@ -125,7 +128,6 @@ impl FfbDevice {
                 self.last_constant = lvl;
             }
         }
-        // FF_SPRING
         if let Some(id) = self.id_spring {
             let s = (out.spring_strength * 0xFFFF as f32) as u16;
             let center = scale_to_i16(out.spring_center);
@@ -139,7 +141,6 @@ impl FfbDevice {
                 self.last_spring = s;
             }
         }
-        // FF_DAMPER
         if let Some(id) = self.id_damper {
             let d = (out.damper * 0xFFFF as f32) as u16;
             if d.abs_diff(self.last_damper) > 256 {
@@ -152,7 +153,6 @@ impl FfbDevice {
                 self.last_damper = d;
             }
         }
-        // Periodic rumble
         if let Some(id) = self.id_rumble {
             let mag = (out.rumble_magnitude * 0x7FFF as f32) as u16;
             let period = out.rumble_period_ms;
@@ -183,7 +183,6 @@ impl FfbDevice {
             self.id_spring,
             self.id_damper,
             self.id_rumble,
-            self.id_kick,
         ]
         .into_iter()
         .flatten()
@@ -195,156 +194,15 @@ impl FfbDevice {
     }
 
     // ---------------------------------------------------------------
-    // Raw ioctl wrappers. The full struct ff_effect layout is in
-    // linux/input.h; we rely on input-linux's sys bindings.
+    // ioctl wrappers: upload/update an effect slot
     // ---------------------------------------------------------------
 
-    fn upload_constant(&self, level: i16, duration_ms: u16) -> Result<i16> {
-        let mut eff = self.new_effect(raw::FF_CONSTANT as u16, duration_ms);
-        unsafe {
-            eff.u.constant.level = level;
-            eff.u.constant.envelope.attack_length = 0;
-            eff.u.constant.envelope.attack_level = 0;
-            eff.u.constant.envelope.fade_length = 0;
-            eff.u.constant.envelope.fade_level = 0;
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(eff.id)
-    }
-
-    fn update_constant(&self, id: i16, level: i16, duration_ms: u16) -> Result<()> {
-        let mut eff = self.new_effect(raw::FF_CONSTANT as u16, duration_ms);
-        eff.id = id;
-        unsafe {
-            eff.u.constant.level = level;
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(())
-    }
-
-    fn upload_spring(&self, strength: u16, center: i16) -> Result<i16> {
-        let mut eff = self.new_effect(raw::FF_SPRING as u16, 0);
-        unsafe {
-            for axis in 0..2 {
-                eff.u.condition[axis].right_saturation = strength;
-                eff.u.condition[axis].left_saturation = strength;
-                eff.u.condition[axis].right_coeff = strength as i16;
-                eff.u.condition[axis].left_coeff = strength as i16;
-                eff.u.condition[axis].deadband = 0;
-                eff.u.condition[axis].center = center;
-            }
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(eff.id)
-    }
-
-    fn update_spring(&self, id: i16, strength: u16, center: i16) -> Result<()> {
-        let mut eff = self.new_effect(raw::FF_SPRING as u16, 0);
-        eff.id = id;
-        unsafe {
-            for axis in 0..2 {
-                eff.u.condition[axis].right_saturation = strength;
-                eff.u.condition[axis].left_saturation = strength;
-                let c = (strength as i32).min(0x7FFF) as i16;
-                eff.u.condition[axis].right_coeff = c;
-                eff.u.condition[axis].left_coeff = c;
-                eff.u.condition[axis].center = center;
-            }
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(())
-    }
-
-    fn upload_damper(&self, strength: u16) -> Result<i16> {
-        let mut eff = self.new_effect(raw::FF_DAMPER as u16, 0);
-        unsafe {
-            for axis in 0..2 {
-                eff.u.condition[axis].right_saturation = strength;
-                eff.u.condition[axis].left_saturation = strength;
-                eff.u.condition[axis].right_coeff = strength as i16;
-                eff.u.condition[axis].left_coeff = strength as i16;
-            }
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(eff.id)
-    }
-
-    fn update_damper(&self, id: i16, strength: u16) -> Result<()> {
-        let mut eff = self.new_effect(raw::FF_DAMPER as u16, 0);
-        eff.id = id;
-        unsafe {
-            for axis in 0..2 {
-                eff.u.condition[axis].right_saturation = strength;
-                eff.u.condition[axis].left_saturation = strength;
-                eff.u.condition[axis].right_coeff = strength as i16;
-                eff.u.condition[axis].left_coeff = strength as i16;
-            }
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(())
-    }
-
-    fn upload_periodic(&self, magnitude: u16, period_ms: u16) -> Result<i16> {
-        let mut eff = self.new_effect(raw::FF_PERIODIC as u16, 0);
-        unsafe {
-            eff.u.periodic.waveform = raw::FF_SINE as u16;
-            eff.u.periodic.period = period_ms;
-            eff.u.periodic.magnitude = magnitude as i16;
-            eff.u.periodic.offset = 0;
-            eff.u.periodic.phase = 0;
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(eff.id)
-    }
-
-    fn update_periodic(&self, id: i16, magnitude: u16, period_ms: u16) -> Result<()> {
-        let mut eff = self.new_effect(raw::FF_PERIODIC as u16, 0);
-        eff.id = id;
-        unsafe {
-            eff.u.periodic.waveform = raw::FF_SINE as u16;
-            eff.u.periodic.period = period_ms;
-            eff.u.periodic.magnitude = magnitude as i16;
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(())
-    }
-
-    fn upload_rumble(&self, strong: u16) -> Result<i16> {
-        let mut eff = self.new_effect(raw::FF_RUMBLE as u16, 0);
-        unsafe {
-            eff.u.rumble.strong_magnitude = strong;
-            eff.u.rumble.weak_magnitude = strong / 2;
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(eff.id)
-    }
-
-    fn update_rumble(&self, id: i16, strong: u16) -> Result<()> {
-        let mut eff = self.new_effect(raw::FF_RUMBLE as u16, 0);
-        eff.id = id;
-        unsafe {
-            eff.u.rumble.strong_magnitude = strong;
-            eff.u.rumble.weak_magnitude = strong / 2;
-        }
-        self.ioctl_upload(&mut eff)?;
-        Ok(())
-    }
-
-    fn new_effect(&self, kind: u16, duration_ms: u16) -> raw::ff_effect {
-        // SAFETY: ff_effect is POD; zeroed state is valid on all arches.
-        let mut eff: raw::ff_effect = unsafe { std::mem::zeroed() };
-        eff.type_ = kind;
-        eff.id = -1;
-        eff.replay.length = duration_ms;
-        eff.replay.delay = 0;
-        eff.direction = 0x4000; // 90 deg, magnitude in +X
-        eff
-    }
-
-    fn ioctl_upload(&self, eff: &mut raw::ff_effect) -> Result<()> {
-        ioctl_write_ptr!(evioc_sendff, b'E', 0x80, raw::ff_effect);
-        let fd: RawFd = self.file.as_raw_fd();
-        let rc = unsafe { evioc_sendff(fd, eff as *mut _) };
+    fn upload_effect(&self, eff: &mut sys::ff_effect) -> Result<()> {
+        // SAFETY: `from_raw_fd`-style usage via as_raw_fd; the handle
+        // does not take ownership.
+        let handle = unsafe { EvdevHandle::from_fd(self.file.as_raw_fd()) };
+        let rc = handle.send_force_feedback(eff);
+        std::mem::forget(handle); // don't close the fd on drop
         rc.map(|_| ()).with_context(|| {
             format!(
                 "EVIOCSFF failed on {:?}. Try `fs25-ffb --diagnose`.",
@@ -353,45 +211,192 @@ impl FfbDevice {
         })
     }
 
+    fn upload_constant(&self, level: i16, duration_ms: u16) -> Result<i16> {
+        let mut eff = new_effect(sys::FF_CONSTANT, duration_ms);
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            u.constant_mut().level = level;
+        }
+        self.upload_effect(&mut eff)?;
+        Ok(eff.id)
+    }
+
+    fn update_constant(&self, id: i16, level: i16, duration_ms: u16) -> Result<()> {
+        let mut eff = new_effect(sys::FF_CONSTANT, duration_ms);
+        eff.id = id;
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            u.constant_mut().level = level;
+        }
+        self.upload_effect(&mut eff)
+    }
+
+    fn upload_spring(&self, strength: u16, center: i16) -> Result<i16> {
+        let mut eff = new_effect(sys::FF_SPRING, 0);
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            let conds = u.condition_mut();
+            for cond in conds.iter_mut() {
+                cond.right_saturation = strength;
+                cond.left_saturation = strength;
+                cond.right_coeff = strength as i16;
+                cond.left_coeff = strength as i16;
+                cond.deadband = 0;
+                cond.center = center;
+            }
+        }
+        self.upload_effect(&mut eff)?;
+        Ok(eff.id)
+    }
+
+    fn update_spring(&self, id: i16, strength: u16, center: i16) -> Result<()> {
+        let mut eff = new_effect(sys::FF_SPRING, 0);
+        eff.id = id;
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            let conds = u.condition_mut();
+            for cond in conds.iter_mut() {
+                cond.right_saturation = strength;
+                cond.left_saturation = strength;
+                let c = (strength as i32).min(0x7FFF) as i16;
+                cond.right_coeff = c;
+                cond.left_coeff = c;
+                cond.center = center;
+            }
+        }
+        self.upload_effect(&mut eff)
+    }
+
+    fn upload_damper(&self, strength: u16) -> Result<i16> {
+        let mut eff = new_effect(sys::FF_DAMPER, 0);
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            let conds = u.condition_mut();
+            for cond in conds.iter_mut() {
+                cond.right_saturation = strength;
+                cond.left_saturation = strength;
+                cond.right_coeff = strength as i16;
+                cond.left_coeff = strength as i16;
+            }
+        }
+        self.upload_effect(&mut eff)?;
+        Ok(eff.id)
+    }
+
+    fn update_damper(&self, id: i16, strength: u16) -> Result<()> {
+        let mut eff = new_effect(sys::FF_DAMPER, 0);
+        eff.id = id;
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            let conds = u.condition_mut();
+            for cond in conds.iter_mut() {
+                cond.right_saturation = strength;
+                cond.left_saturation = strength;
+                cond.right_coeff = strength as i16;
+                cond.left_coeff = strength as i16;
+            }
+        }
+        self.upload_effect(&mut eff)
+    }
+
+    fn upload_periodic(&self, magnitude: u16, period_ms: u16) -> Result<i16> {
+        let mut eff = new_effect(sys::FF_PERIODIC, 0);
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            let p = u.periodic_mut();
+            p.waveform = sys::FF_SINE;
+            p.period = period_ms;
+            p.magnitude = magnitude as i16;
+            p.offset = 0;
+            p.phase = 0;
+        }
+        self.upload_effect(&mut eff)?;
+        Ok(eff.id)
+    }
+
+    fn update_periodic(&self, id: i16, magnitude: u16, period_ms: u16) -> Result<()> {
+        let mut eff = new_effect(sys::FF_PERIODIC, 0);
+        eff.id = id;
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            let p = u.periodic_mut();
+            p.waveform = sys::FF_SINE;
+            p.period = period_ms;
+            p.magnitude = magnitude as i16;
+        }
+        self.upload_effect(&mut eff)
+    }
+
+    fn upload_rumble(&self, strong: u16) -> Result<i16> {
+        let mut eff = new_effect(sys::FF_RUMBLE, 0);
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            let r = u.rumble_mut();
+            r.strong_magnitude = strong;
+            r.weak_magnitude = strong / 2;
+        }
+        self.upload_effect(&mut eff)?;
+        Ok(eff.id)
+    }
+
+    fn update_rumble(&self, id: i16, strong: u16) -> Result<()> {
+        let mut eff = new_effect(sys::FF_RUMBLE, 0);
+        eff.id = id;
+        {
+            let u: &mut sys::ff_effect_union = (&mut eff).into();
+            let r = u.rumble_mut();
+            r.strong_magnitude = strong;
+            r.weak_magnitude = strong / 2;
+        }
+        self.upload_effect(&mut eff)
+    }
+
+    // ---------------------------------------------------------------
+    // EV_FF event writes
+    // ---------------------------------------------------------------
+
     fn start(&self, id: i16) -> Result<()> {
-        self.write_ev(raw::EV_FF as u16, id as u16, 1)
+        self.write_ev(sys::EV_FF as u16, id as u16, 1)
     }
 
     fn stop(&self, id: i16) -> Result<()> {
-        self.write_ev(raw::EV_FF as u16, id as u16, 0)
+        self.write_ev(sys::EV_FF as u16, id as u16, 0)
     }
 
     fn set_gain(&self, gain_0_ffff: u16) -> Result<()> {
-        self.write_ev(raw::EV_FF as u16, raw::FF_GAIN as u16, gain_0_ffff as i32)
+        self.write_ev(sys::EV_FF as u16, sys::FF_GAIN, gain_0_ffff as i32)
     }
 
     fn set_autocenter(&self, strength_0_ffff: u16) -> Result<()> {
         self.write_ev(
-            raw::EV_FF as u16,
-            raw::FF_AUTOCENTER as u16,
+            sys::EV_FF as u16,
+            sys::FF_AUTOCENTER,
             strength_0_ffff as i32,
         )
     }
 
     fn write_ev(&self, type_: u16, code: u16, value: i32) -> Result<()> {
-        use nix::libc::{timeval, write};
-        let ev = raw::input_event {
-            time: timeval { tv_sec: 0, tv_usec: 0 },
+        let ev = sys::input_event {
+            time: sys::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
             type_,
             code,
             value,
         };
-        let fd = self.file.as_raw_fd();
+        // SAFETY: we write exactly one input_event struct; the fd is
+        // open for RW and owned by `self.file`.
         let n = unsafe {
-            write(
-                fd,
-                &ev as *const _ as *const _,
-                std::mem::size_of::<raw::input_event>(),
+            libc::write(
+                self.file.as_raw_fd(),
+                &ev as *const _ as *const libc::c_void,
+                std::mem::size_of::<sys::input_event>(),
             )
         };
         if n < 0 {
             return Err(anyhow!(
-                "write(EV_FF) failed (errno {})",
+                "write(EV_FF) failed: {}",
                 std::io::Error::last_os_error()
             ));
         }
@@ -405,7 +410,22 @@ impl Drop for FfbDevice {
     }
 }
 
-/// Scale -1..1 float to i16 for FF_CONSTANT.level (-32767..32767).
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn new_effect(kind: u16, duration_ms: u16) -> sys::ff_effect {
+    // SAFETY: ff_effect is POD; all-zeros is a valid initial state.
+    let mut eff: sys::ff_effect = unsafe { std::mem::zeroed() };
+    eff.type_ = kind;
+    eff.id = -1;
+    eff.replay.length = duration_ms;
+    eff.replay.delay = 0;
+    eff.direction = 0x4000; // 90 deg, magnitude in +X
+    eff
+}
+
+/// Scale -1..1 float to i16 for `FF_CONSTANT.level` (-32767..32767).
 #[inline]
 pub fn scale_to_i16(v: f32) -> i16 {
     (v.clamp(-1.0, 1.0) * 32767.0) as i16
@@ -473,8 +493,32 @@ pub fn run_manual_test(kind: TestEffect) -> Result<()> {
     Ok(())
 }
 
-// Silence unused-import warnings when building on hosts without all kernel
-// bits exposed via input-linux. AbsoluteAxis/EventKind/ForceFeedbackKind
-// are referenced indirectly through constants above.
-#[allow(dead_code)]
-fn _unused_imports(_a: AbsoluteAxis, _e: EventKind, _f: ForceFeedbackKind) {}
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::size_of;
+
+    // Sanity-check the `ff_effect` layout we depend on. If the upstream
+    // struct grows we want CI to flag it, not silent corruption.
+    #[test]
+    fn ff_effect_layout_fits_u64_4() {
+        // The typed accessors we use cast the 4-u64 payload to the
+        // specific effect struct. Largest user of the payload is
+        // `ff_periodic_effect` which must fit within 32 bytes on LP64.
+        assert!(size_of::<sys::ff_periodic_effect>() <= 32);
+        assert!(size_of::<sys::ff_condition_effect>() * 2 <= 32);
+        assert!(size_of::<sys::ff_constant_effect>() <= 32);
+        assert!(size_of::<sys::ff_rumble_effect>() <= 32);
+    }
+
+    #[test]
+    fn scale_to_i16_boundaries() {
+        assert_eq!(scale_to_i16(1.5), 32767);
+        assert_eq!(scale_to_i16(-1.5), -32767);
+        assert_eq!(scale_to_i16(0.0), 0);
+    }
+}

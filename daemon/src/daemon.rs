@@ -18,8 +18,10 @@ use std::time::{Duration, Instant};
 pub struct DaemonHandle {
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
-    pub config: Arc<Mutex<Config>>,
-    pub shared: Shared,
+    // Kept alive to prevent the daemon thread's references from dangling,
+    // even though the GUI reaches them via its own clones.
+    _config: Arc<Mutex<Config>>,
+    _shared: Shared,
 }
 
 impl DaemonHandle {
@@ -59,8 +61,8 @@ pub fn spawn(config: Arc<Mutex<Config>>, shared: Shared) -> DaemonHandle {
     DaemonHandle {
         stop,
         join: Some(join),
-        config,
-        shared,
+        _config: config,
+        _shared: shared,
     }
 }
 
@@ -72,11 +74,12 @@ pub fn run_blocking(config_path: Option<PathBuf>) -> Result<()> {
     let shared = crate::shared::new_shared();
     let stop = Arc::new(AtomicBool::new(false));
 
-    // SIGTERM / Ctrl-C handler via a small manual loop; we avoid ctrlc
-    // crate dependency.
-    let stop2 = stop.clone();
-    ctrlc_like(move || stop2.store(true, Ordering::Relaxed));
-
+    // We rely on the default SIGINT/SIGTERM handlers terminating the
+    // process. `FfbDevice::Drop` (and by extension the daemon thread's
+    // own cleanup) runs `stop_all()` via `impl Drop`, so the wheel is
+    // safely released even on abrupt shutdown. Handling signals
+    // ourselves is unnecessary for this service and tricky to do
+    // soundly across Rust editions.
     run_loop(cfg, shared, stop)
 }
 
@@ -166,7 +169,12 @@ fn run_loop(cfg: Arc<Mutex<Config>>, shared: Shared, stop: Arc<AtomicBool>) -> R
                 .received_at
                 .map(|t| t.elapsed().as_secs_f32() * 1000.0)
                 .unwrap_or(0.0);
-            s.history.push(frame.steering_angle, out.constant, out.spring_strength, lat_ms);
+            s.history.push(
+                frame.steering_angle,
+                out.constant,
+                out.spring_strength,
+                lat_ms,
+            );
             s.telemetry = Some(frame);
             s.last_output = out;
             s.last_heartbeat = Heartbeat {
@@ -221,7 +229,7 @@ pub fn resolve_telemetry_path(cfg: &Config) -> Result<PathBuf> {
             .join(appid.to_string())
             .join("pfx/drive_c/users/steamuser/Documents/My Games/FarmingSimulator2025")
             .join("modSettings/FS25_FFBEnhancer/telemetry.bin");
-        if p.parent().map_or(false, Path::exists) {
+        if p.parent().is_some_and(Path::exists) {
             return Ok(p);
         }
     }
@@ -232,32 +240,4 @@ pub fn resolve_telemetry_path(cfg: &Config) -> Result<PathBuf> {
         .join(appid.to_string())
         .join("pfx/drive_c/users/steamuser/Documents/My Games/FarmingSimulator2025")
         .join("modSettings/FS25_FFBEnhancer/telemetry.bin"))
-}
-
-// ---------------------------------------------------------------------------
-// Minimal ctrl-c / SIGTERM handler without pulling a dep.
-// ---------------------------------------------------------------------------
-
-fn ctrlc_like(f: impl Fn() + Send + 'static) {
-    use nix::sys::signal::{self, SigAction, SigHandler, SigSet, Signal};
-    static mut CB: Option<Box<dyn Fn() + Send>> = None;
-    extern "C" fn on_sig(_: i32) {
-        unsafe {
-            if let Some(cb) = &CB {
-                cb();
-            }
-        }
-    }
-    unsafe {
-        CB = Some(Box::new(f));
-    }
-    let action = SigAction::new(
-        SigHandler::Handler(on_sig),
-        signal::SaFlags::empty(),
-        SigSet::empty(),
-    );
-    unsafe {
-        let _ = signal::sigaction(Signal::SIGINT, &action);
-        let _ = signal::sigaction(Signal::SIGTERM, &action);
-    }
 }
