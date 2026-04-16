@@ -60,41 +60,21 @@ function IPCWriter.new(path)
     local self = setmetatable({}, IPCWriter)
     self.path = path
     self.sequence = 0
-    self.file = nil
     self.disabled = false
     self.lastError = nil
+    self.everOpened = false
     return self
 end
 
--- Try to open the file once. On permission errors we disable ourselves and
--- log; further calls become cheap no-ops.
-function IPCWriter:ensureOpen()
-    if self.disabled then return false end
-    if self.file ~= nil then return true end
-
-    local f, err = io.open(self.path, "wb")
-    if f == nil then
-        self.lastError = err or "unknown"
-        self.disabled = true
-        FFBEUtils.log("unable to open telemetry file '%s': %s", self.path, tostring(err))
-        return false
-    end
-    self.file = f
-    FFBEUtils.log("telemetry file opened: %s", self.path)
-    return true
-end
-
-function IPCWriter:close()
-    if self.file ~= nil then
-        self.file:close()
-        self.file = nil
-    end
-end
+-- Nothing to hold open; we open-write-close every frame because the GIANTS
+-- Lua sandbox doesn't expose `file:seek()`, so we can't rewind a long-lived
+-- handle.
+function IPCWriter:close() end
 
 -- t is a plain table filled by Telemetry.lua. Missing keys default to 0 so
 -- partial telemetry (e.g. when entering a vehicle mid-frame) is still safe.
 function IPCWriter:write(t)
-    if not self:ensureOpen() then return false end
+    if self.disabled then return false end
 
     self.sequence = self.sequence + 1
 
@@ -128,21 +108,28 @@ function IPCWriter:write(t)
         FFBEUtils.packU32(FFBEUtils.get(t, "flags", 0)),
         FFBEUtils.packU32(FFBEUtils.get(t, "vehicle_hash", 0)),
     }
+    local payload = table.concat(buf)
 
-    -- Rewind and overwrite. Keeping the file handle open avoids a syscall
-    -- storm at 60Hz; the OS only needs to flush when the block is dirty.
+    -- Open with "wb" truncates to zero; write; close. GIANTS' Lua strips
+    -- file:seek() so we can't rewind a persistent handle, and the cost of
+    -- open/close at <=120Hz is negligible on SSDs.
     local ok, err = pcall(function()
-        self.file:seek("set", 0)
-        self.file:write(table.concat(buf))
-        self.file:flush()
+        local f, e = io.open(self.path, "wb")
+        if f == nil then error(e or "open failed") end
+        f:write(payload)
+        f:close()
     end)
 
     if not ok then
         self.lastError = err
         self.disabled = true
         FFBEUtils.log("write failed, disabling: %s", tostring(err))
-        self:close()
         return false
+    end
+
+    if not self.everOpened then
+        self.everOpened = true
+        FFBEUtils.log("first write succeeded (%d bytes) -> %s", #payload, self.path)
     end
 
     return true
