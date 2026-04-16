@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 pub const MAGIC: u32 = 0x46464245; // "FFBE" little-endian
-pub const FRAME_SIZE: usize = 104;
+// 12-byte header (magic u32 + version u16 + size u16 + sequence u32)
+// + 1 timestamp f32 + 21 physics f32s + 2 trailing u32s (flags + hash)
+// = 12 + 4 + 84 + 8 = 108 bytes.
+pub const FRAME_SIZE: usize = 108;
 
 #[derive(Debug, Clone, Default)]
 pub struct Telemetry {
