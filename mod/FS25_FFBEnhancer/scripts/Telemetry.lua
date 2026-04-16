@@ -21,6 +21,9 @@ local FLAG_PTO_ON       = 0x20
 -- Cached value smoothing
 local lastVel = {0, 0, 0}
 local lastT = 0
+-- Tracks the last vehicle we dumped diagnostics for (by identity). Lets us
+-- print one summary per vehicle change instead of spamming the log.
+local lastDumpedVehicle = nil
 local collisionDecay = 0
 
 -- Entry-point called by FFBEnhancer every frame. Returns a fresh telemetry
@@ -37,18 +40,29 @@ function Telemetry.capture(controlledVehicle, dt)
 
     local flags = FLAG_IN_VEHICLE
 
+    -- Spec_drivable holds most of what used to live directly on the vehicle
+    -- in FS22 (rotatedTime, maxRotTime, etc.). FS25 still sometimes mirrors
+    -- those onto the vehicle but not on every class, so probe the spec
+    -- first and fall back to the bare field.
+    local spec_d = FFBEUtils.get(controlledVehicle, "spec_drivable", nil)
+
     -- ------------------------------------------------------------------
     -- Steering
     -- ------------------------------------------------------------------
-    local steering = FFBEUtils.get(controlledVehicle, "rotatedTime", 0)
-    local maxRot = FFBEUtils.get(controlledVehicle, "maxRotTime", 1)
-    local minRot = FFBEUtils.get(controlledVehicle, "minRotTime", -1)
+    local steering, maxRot, minRot, target
+    if spec_d ~= nil and spec_d.rotatedTime ~= nil then
+        steering = spec_d.rotatedTime
+        maxRot = FFBEUtils.get(spec_d, "maxRotTime", 1)
+        minRot = FFBEUtils.get(spec_d, "minRotTime", -1)
+        target = FFBEUtils.get(spec_d, "targetRotatedTime", steering)
+    else
+        steering = FFBEUtils.get(controlledVehicle, "rotatedTime", 0)
+        maxRot = FFBEUtils.get(controlledVehicle, "maxRotTime", 1)
+        minRot = FFBEUtils.get(controlledVehicle, "minRotTime", -1)
+        target = FFBEUtils.get(controlledVehicle, "targetRotatedTime", steering)
+    end
     local span = math.max(math.abs(maxRot), math.abs(minRot), 0.0001)
     t.steering_angle = FFBEUtils.clamp(steering / span, -1, 1)
-
-    -- targetRotatedTime is the commanded value from the input binding or AI;
-    -- falling back to the actual angle keeps difference-based damping sane.
-    local target = FFBEUtils.get(controlledVehicle, "targetRotatedTime", steering)
     t.steering_target = FFBEUtils.clamp(target / span, -1, 1)
 
     -- ------------------------------------------------------------------
@@ -61,15 +75,27 @@ function Telemetry.capture(controlledVehicle, dt)
         if ok then vx, vy, vz = a, b, c end
     end
 
-    -- Forward speed in m/s. GIANTS' Vehicle:getLastSpeed() returns km/h;
-    -- the bare `lastSpeed` field is in meters-per-millisecond (so *1000 = m/s).
-    -- Prefer the public getter, fall back to the field for non-vehicle objects.
+    -- Forward speed in m/s. Try, in order:
+    --   1. vehicle:getLastSpeed()             -> km/h
+    --   2. vehicle.lastSpeedReal              -> m/s (FS25 field)
+    --   3. sqrt(vx^2 + vz^2)                  -> m/s from world-frame velocity
+    --   4. vehicle.lastSpeed * 1000           -> m/s (FS22-style m/ms field)
     local speed = 0
     local okSpeed, kmh = pcall(function() return controlledVehicle:getLastSpeed() end)
-    if okSpeed and type(kmh) == "number" then
+    if okSpeed and type(kmh) == "number" and kmh > 0 then
         speed = kmh / 3.6
     else
-        speed = FFBEUtils.get(controlledVehicle, "lastSpeed", 0) * 1000
+        local lsr = FFBEUtils.get(controlledVehicle, "lastSpeedReal", nil)
+        if type(lsr) == "number" and lsr > 0 then
+            speed = lsr
+        else
+            local worldSpeed = math.sqrt(vx * vx + vz * vz)
+            if worldSpeed > 0.05 then
+                speed = worldSpeed
+            else
+                speed = FFBEUtils.get(controlledVehicle, "lastSpeed", 0) * 1000
+            end
+        end
     end
     t.speed = speed
 
@@ -180,21 +206,19 @@ function Telemetry.capture(controlledVehicle, dt)
     end
 
     -- ------------------------------------------------------------------
-    -- Mass (self + implements)
+    -- Mass (self + implements). Prefer the : method call syntax so any
+    -- subclass overrides dispatch correctly. FS25 also exposes
+    -- spec_attacherJoints.totalMass on some vehicles.
     -- ------------------------------------------------------------------
-    t.total_mass = FFBEUtils.get(controlledVehicle, "getTotalMass", nil)
-    if type(t.total_mass) == "function" then
-        local ok, m = pcall(t.total_mass, controlledVehicle, true)
-        t.total_mass = ok and m or 0
-    end
-    t.total_mass = t.total_mass or 0
+    local total = 0
+    local okT, mt = pcall(function() return controlledVehicle:getTotalMass(true) end)
+    if okT and type(mt) == "number" then total = mt end
+    t.total_mass = total
 
-    local selfMass = FFBEUtils.get(controlledVehicle, "getTotalMass", nil)
-    if type(selfMass) == "function" then
-        local ok, m = pcall(selfMass, controlledVehicle, false)
-        selfMass = ok and m or 0
-    end
-    t.attached_mass = math.max((t.total_mass or 0) - (selfMass or 0), 0)
+    local selfM = 0
+    local okS, ms = pcall(function() return controlledVehicle:getTotalMass(false) end)
+    if okS and type(ms) == "number" then selfM = ms end
+    t.attached_mass = math.max(total - selfM, 0)
 
     -- ------------------------------------------------------------------
     -- Collision one-shot (decaying)
@@ -220,6 +244,21 @@ function Telemetry.capture(controlledVehicle, dt)
     t.flags = flags
     t.vehicle_hash = Telemetry._hashTypeName(
         FFBEUtils.get(controlledVehicle, "typeName", "unknown"))
+
+    if controlledVehicle ~= lastDumpedVehicle then
+        lastDumpedVehicle = controlledVehicle
+        local okCN, cn = pcall(function() return controlledVehicle.className and controlledVehicle:className() end)
+        FFBEUtils.log(
+            "vehicle: class=%s type=%s spec_drivable=%s steering=%.3f/%.3f speed=%.2f m/s mass=%.0f kg (self=%.0f) wheels=%d",
+            tostring(okCN and cn or "?"),
+            tostring(FFBEUtils.get(controlledVehicle, "typeName", "?")),
+            tostring(spec_d ~= nil),
+            steering or 0, span or 0,
+            t.speed or 0,
+            t.total_mass or 0,
+            selfM or 0,
+            #wheels)
+    end
 
     return t
 end
