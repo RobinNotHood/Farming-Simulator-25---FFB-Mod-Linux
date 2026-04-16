@@ -122,7 +122,8 @@ impl FfbDevice {
     pub fn apply(&mut self, out: &EffectOutput) -> Result<()> {
         if let Some(id) = self.id_constant {
             let lvl = scale_to_i16(out.constant);
-            if (lvl - self.last_constant).abs() > 150 {
+            // Widen to i32 before subtracting: i16::MIN - i16::MAX wraps.
+            if (lvl as i32 - self.last_constant as i32).abs() > 150 {
                 self.update_constant(id, lvl, 0xFFFF)?;
                 self.start(id)?;
                 self.last_constant = lvl;

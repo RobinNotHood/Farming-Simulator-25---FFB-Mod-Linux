@@ -61,9 +61,16 @@ function Telemetry.capture(controlledVehicle, dt)
         if ok then vx, vy, vz = a, b, c end
     end
 
-    -- Forward speed (longitudinal) - project world velocity onto vehicle
-    -- local Z via the engine helper if available.
-    local speed = FFBEUtils.get(controlledVehicle, "lastSpeed", 0) * 1000 / 3600
+    -- Forward speed in m/s. GIANTS' Vehicle:getLastSpeed() returns km/h;
+    -- the bare `lastSpeed` field is in meters-per-millisecond (so *1000 = m/s).
+    -- Prefer the public getter, fall back to the field for non-vehicle objects.
+    local speed = 0
+    local okSpeed, kmh = pcall(function() return controlledVehicle:getLastSpeed() end)
+    if okSpeed and type(kmh) == "number" then
+        speed = kmh / 3.6
+    else
+        speed = FFBEUtils.get(controlledVehicle, "lastSpeed", 0) * 1000
+    end
     t.speed = speed
 
     if dt > 0 and lastT > 0 then
@@ -120,11 +127,9 @@ function Telemetry.capture(controlledVehicle, dt)
             airborne = false
         end
 
-        -- Lateral slip stored as latSlip on most wheel variants.
+        -- Lateral slip stored as latSlip on most wheel variants. Positive
+        -- positionZ means the wheel is in front of the vehicle origin.
         local lat = math.abs(FFBEUtils.get(wheel, "latSlip", 0))
-        local isFront = FFBEUtils.get(wheel, "isLeft", true)
-            and FFBEUtils.get(wheel, "positionZ", 0) > 0
-            or FFBEUtils.get(wheel, "positionZ", 0) > 0
         if FFBEUtils.get(wheel, "positionZ", 0) > 0 then
             slipF = slipF + lat
             slipFcount = slipFcount + 1

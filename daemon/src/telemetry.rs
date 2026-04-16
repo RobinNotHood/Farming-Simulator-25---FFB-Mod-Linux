@@ -1,6 +1,6 @@
 //! Reads the binary telemetry frames written by the Lua mod.
 //!
-//! The Lua side (scripts/IPCWriter.lua) rewrites a 104-byte record each frame.
+//! The Lua side (scripts/IPCWriter.lua) rewrites a 108-byte record each frame.
 //! We read it with an explicit little-endian parser; byteorder keeps us
 //! portable even though LE is the only architecture realistically running
 //! FS25.
@@ -65,7 +65,7 @@ impl Telemetry {
     }
 }
 
-/// Parse a raw 104-byte frame. Returns Err on torn writes (bad magic).
+/// Parse a raw 108-byte frame. Returns Err on torn writes (bad magic).
 #[allow(clippy::field_reassign_with_default)] // 27-field literal is worse
 pub fn parse_frame(buf: &[u8]) -> Result<Telemetry> {
     if buf.len() < FRAME_SIZE {

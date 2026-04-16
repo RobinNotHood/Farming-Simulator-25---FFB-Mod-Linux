@@ -46,7 +46,8 @@
 --                           bit3=reverse, bit4=airborne, bit5=pto_on)
 --   u32  vehicle_type_hash (stable per vehicle class; lets daemon cache)
 --
--- Total: 4+2+2+4+4 + 21*4 + 4+4 = 104 bytes
+-- Total: 4+2+2+4 (header=12) + 22*4 (timestamp + 21 physics = 88) + 4+4 (8)
+--        = 108 bytes.
 --
 
 IPCWriter = {}
