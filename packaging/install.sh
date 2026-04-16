@@ -60,9 +60,6 @@ find_fs25_mods_dir() {
 
 install_mod() {
     log "installing Lua mod into FS25 mods directory"
-    if ! command -v zip >/dev/null; then
-        fail "zip command not found. Install it: sudo pacman -S zip   (or apt/dnf equivalent)"
-    fi
     local dest
     if ! dest=$(find_fs25_mods_dir); then
         warn "No FS25 Proton prefix yet. Launch FS25 once in Steam so Proton creates it."
@@ -71,14 +68,20 @@ install_mod() {
     fi
     log "mods dir: $dest"
 
-    local out="$dest/FS25_FFBEnhancer.zip"
-    # Build zip deterministically. `set -e` will trip if zip fails.
-    ( cd "$MOD_SRC/.." && zip -qr "$out" "FS25_FFBEnhancer" \
-        -x "*.DS_Store" "*README*" "*.dds.README" )
-    if [[ ! -s "$out" ]]; then
-        fail "zip produced no file at $out"
-    fi
-    log "wrote $out ($(du -h "$out" | awk '{print $1}'))"
+    # Install as a directory, not a zip. FS25 accepts both, but directory
+    # form avoids the common "modDesc.xml must be at zip root" trap
+    # (GIANTS' parser is strict about the zip top-level layout).
+    local target="$dest/FS25_FFBEnhancer"
+    rm -rf "$target"
+    rm -f "$dest/FS25_FFBEnhancer.zip"
+    mkdir -p "$target"
+    # rsync is nicer but may be absent; cp -a works everywhere.
+    cp -a "$MOD_SRC/." "$target/"
+    # Strip dev-only sidecars from the installed copy.
+    find "$target" -name "*.dds.README" -delete
+    find "$target" -name "README.md" -delete
+
+    log "installed mod folder at $target"
 }
 
 build_daemon() {
