@@ -300,8 +300,8 @@ impl FfbDevice {
             for cond in conds.iter_mut() {
                 cond.right_saturation = strength;
                 cond.left_saturation = strength;
-                cond.right_coeff = strength as i16;
-                cond.left_coeff = strength as i16;
+                cond.right_coeff = coeff_clamp(strength);
+                cond.left_coeff = coeff_clamp(strength);
                 cond.deadband = 0;
                 cond.center = center;
             }
@@ -319,9 +319,8 @@ impl FfbDevice {
             for cond in conds.iter_mut() {
                 cond.right_saturation = strength;
                 cond.left_saturation = strength;
-                let c = (strength as i32).min(0x7FFF) as i16;
-                cond.right_coeff = c;
-                cond.left_coeff = c;
+                cond.right_coeff = coeff_clamp(strength);
+                cond.left_coeff = coeff_clamp(strength);
                 cond.center = center;
             }
         }
@@ -336,8 +335,8 @@ impl FfbDevice {
             for cond in conds.iter_mut() {
                 cond.right_saturation = strength;
                 cond.left_saturation = strength;
-                cond.right_coeff = strength as i16;
-                cond.left_coeff = strength as i16;
+                cond.right_coeff = coeff_clamp(strength);
+                cond.left_coeff = coeff_clamp(strength);
             }
         }
         self.upload_effect(&mut eff)?;
@@ -353,8 +352,8 @@ impl FfbDevice {
             for cond in conds.iter_mut() {
                 cond.right_saturation = strength;
                 cond.left_saturation = strength;
-                cond.right_coeff = strength as i16;
-                cond.left_coeff = strength as i16;
+                cond.right_coeff = coeff_clamp(strength);
+                cond.left_coeff = coeff_clamp(strength);
             }
         }
         self.upload_effect(&mut eff)
@@ -490,6 +489,15 @@ fn new_effect(kind: u16, duration_ms: u16) -> sys::ff_effect {
 #[inline]
 pub fn scale_to_i16(v: f32) -> i16 {
     (v.clamp(-1.0, 1.0) * 32767.0) as i16
+}
+
+/// Convert a u16 strength (0..=0xFFFF) to an i16 condition coefficient,
+/// saturating at `i16::MAX`. A naked `strength as i16` wraps any value above
+/// 0x7FFF to a negative number — and a negative damper coefficient is a
+/// positive-feedback loop that makes the wheel spin up uncontrollably.
+#[inline]
+pub fn coeff_clamp(strength: u16) -> i16 {
+    strength.min(i16::MAX as u16) as i16
 }
 
 /// Public CLI entry point for `fs25-ffb --test <kind>`.
