@@ -1,0 +1,28 @@
+[Unit]
+Description=FS25 Force Feedback Enhancer (headless daemon)
+Documentation=file:///usr/share/doc/fs25-ffb/TROUBLESHOOTING.md
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/fs25-ffb --daemon
+Restart=on-failure
+RestartSec=3s
+# The daemon must be able to keep reading /dev/input/eventX even if Steam
+# restarts the game; systemd's default RestartSec is fine.
+Environment=RUST_LOG=info
+
+# Hardening - we only need /dev/input and ~/.config/fs25-ffb + the Steam
+# compatdata tree. Everything else can be read-only / masked.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/fs25-ffb %h/.local/share/fs25-ffb
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictNamespaces=yes
+
+[Install]
+WantedBy=default.target

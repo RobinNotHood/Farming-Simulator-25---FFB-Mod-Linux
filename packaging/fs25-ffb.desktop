@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=FS25 FFB Enhancer
+GenericName=Force Feedback Tuner
+Comment=Configure and monitor Farming Simulator 25 force feedback
+Exec=fs25-ffb --gui
+Icon=fs25-ffb
+Terminal=false
+Categories=Game;Settings;HardwareSettings;
+Keywords=farming;simulator;wheel;force;feedback;ffb;moza;logitech;

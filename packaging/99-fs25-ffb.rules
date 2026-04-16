@@ -1,0 +1,38 @@
+# udev rules for FS25 FFB Enhancer
+#
+# Grants the `input` group read/write access to force-feedback-capable wheels
+# so the daemon doesn't need root. Installed to /etc/udev/rules.d/.
+#
+# After installing:
+#   sudo udevadm control --reload
+#   sudo udevadm trigger
+
+# Moza Racing (all wheelbases: R3, R5, R9, R12, R16, R21)
+SUBSYSTEM=="input", ATTRS{idVendor}=="346e", MODE="0660", GROUP="input", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="346e", MODE="0660", GROUP="input", TAG+="uaccess"
+
+# Logitech (G25/G27/G29/G920/G923, Driving Force Pro)
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c24f", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c260", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c261", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c262", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c266", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c294", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c298", MODE="0660", GROUP="input", TAG+="uaccess"
+SUBSYSTEM=="input", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="c29b", MODE="0660", GROUP="input", TAG+="uaccess"
+
+# Thrustmaster (T150, T248, T300, TX, TS-XW, T-GT, TMX)
+SUBSYSTEM=="input", ATTRS{idVendor}=="044f", MODE="0660", GROUP="input", TAG+="uaccess"
+
+# Fanatec (ClubSport, CSL DD, DD Pro, DD1, DD2)
+SUBSYSTEM=="input", ATTRS{idVendor}=="0eb7", MODE="0660", GROUP="input", TAG+="uaccess"
+
+# Simagic
+SUBSYSTEM=="input", ATTRS{idVendor}=="11ff", MODE="0660", GROUP="input", TAG+="uaccess"
+
+# Simucube
+SUBSYSTEM=="input", ATTRS{idVendor}=="16d0", MODE="0660", GROUP="input", TAG+="uaccess"
+
+# Generic PIDFF fallback for any wheel claiming FF_CONSTANT
+KERNEL=="event*", SUBSYSTEM=="input", ATTRS{capabilities/ev}=="*20*", \
+    MODE="0660", GROUP="input", TAG+="uaccess"

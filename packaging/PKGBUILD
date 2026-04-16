@@ -1,0 +1,83 @@
+# Maintainer: fs25-ffb-mod-linux
+pkgname=fs25-ffb
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Force feedback enhancer daemon and GUI for Farming Simulator 25 on Linux"
+arch=('x86_64')
+url="https://github.com/RobinNotHood/Farming-Simulator-25---FFB-Mod-Linux"
+license=('MIT')
+depends=('gcc-libs' 'systemd-libs')
+makedepends=('rust' 'cargo' 'git' 'zip')
+optdepends=(
+    'boxflat: Moza wheelbase configurator'
+    'steam: required to run FS25'
+)
+backup=('etc/udev/rules.d/99-fs25-ffb.rules')
+source=("git+https://github.com/RobinNotHood/Farming-Simulator-25---FFB-Mod-Linux.git#branch=main")
+sha256sums=('SKIP')
+
+prepare() {
+    cd "$srcdir/Farming-Simulator-25---FFB-Mod-Linux/daemon"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(uname -m)-unknown-linux-gnu"
+}
+
+build() {
+    cd "$srcdir/Farming-Simulator-25---FFB-Mod-Linux/daemon"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo build --release --frozen
+}
+
+check() {
+    cd "$srcdir/Farming-Simulator-25---FFB-Mod-Linux/daemon"
+    cargo test --release --frozen
+}
+
+package() {
+    cd "$srcdir/Farming-Simulator-25---FFB-Mod-Linux"
+    install -Dm0755 daemon/target/release/fs25-ffb "$pkgdir/usr/bin/fs25-ffb"
+    install -Dm0644 packaging/99-fs25-ffb.rules "$pkgdir/usr/lib/udev/rules.d/99-fs25-ffb.rules"
+    install -Dm0644 packaging/fs25-ffb.service "$pkgdir/usr/lib/systemd/user/fs25-ffb.service"
+    install -Dm0644 packaging/fs25-ffb.desktop "$pkgdir/usr/share/applications/fs25-ffb.desktop"
+    install -Dm0644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+    install -Dm0644 docs/TROUBLESHOOTING.md "$pkgdir/usr/share/doc/$pkgname/TROUBLESHOOTING.md"
+    install -Dm0644 docs/ARCHITECTURE.md "$pkgdir/usr/share/doc/$pkgname/ARCHITECTURE.md"
+
+    # Ship the Lua mod as a pre-zipped drop-in. Users copy it into the FS25
+    # mods folder manually (the folder lives inside the Proton prefix and
+    # may not exist at package-install time).
+    cd mod
+    zip -qr "$pkgdir/usr/share/$pkgname/FS25_FFBEnhancer.zip" FS25_FFBEnhancer \
+        -x "*.DS_Store" "*.dds.README"
+    install -Dm0755 "$srcdir/Farming-Simulator-25---FFB-Mod-Linux/packaging/install.sh" \
+        "$pkgdir/usr/share/$pkgname/install-mod.sh"
+}
+
+post_install() {
+    cat <<'EOF'
+==> fs25-ffb installed. Next steps:
+
+  1. Add yourself to the 'input' group (once):
+       sudo gpasswd -a $USER input
+     Log out and back in for it to take effect.
+
+  2. Reload udev so wheel permissions apply:
+       sudo udevadm control --reload && sudo udevadm trigger
+
+  3. Enable the user service (optional, for autostart):
+       systemctl --user enable --now fs25-ffb.service
+
+  4. Copy the Lua mod into FS25's mods folder:
+       cp /usr/share/fs25-ffb/FS25_FFBEnhancer.zip \
+          "$HOME/.local/share/Steam/steamapps/compatdata/2300320/pfx/drive_c/users/steamuser/Documents/My Games/FarmingSimulator2025/mods/"
+
+  5. In Steam, add launch option for FS25:  SDL_JOYSTICK_HIDAPI=0 %command%
+
+  6. Launch the GUI from your app menu (FS25 FFB Enhancer) to tune.
+
+See /usr/share/doc/fs25-ffb/TROUBLESHOOTING.md for help.
+EOF
+}
+
+post_upgrade() { post_install; }

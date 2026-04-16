@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<modDesc descVersion="103">
+    <author>FS25-FFB-Mod-Linux</author>
+    <version>0.1.0.0</version>
+
+    <title>
+        <en>FFB Enhancer (Linux)</en>
+        <de>FFB Enhancer (Linux)</de>
+    </title>
+
+    <description>
+        <en><![CDATA[Enhances the very weak default Force Feedback of Farming Simulator 25 on Linux/CachyOS.
+
+This mod is the in-game half of a two-part system: it captures per-frame vehicle telemetry (steering angle, velocity, per-wheel tire forces, suspension compression, ground material, pitch/roll, collisions, attached implement mass, engine RPM) and writes it to a shared file that the companion Linux daemon reads. The daemon then drives the steering wheel directly via /dev/input/eventX, producing richer FFB than the GIANTS engine emits on its own.
+
+Target hardware: Moza R5/R9 (primary) and any other evdev FFB-capable wheel.
+
+No effect is applied unless the daemon is running, so the mod is safe to leave installed on a dedicated server or when playing without the wheel.
+]]></en>
+        <de><![CDATA[Verbessert das schwache Force Feedback von Farming Simulator 25 unter Linux/CachyOS durch eine externe Rust-Komponente, die direkt über evdev auf das Lenkrad zugreift.]]></de>
+    </description>
+
+    <iconFilename>icon.dds</iconFilename>
+    <multiplayer supported="true" />
+
+    <extraSourceFiles>
+        <sourceFile filename="scripts/Utils.lua" />
+        <sourceFile filename="scripts/IPCWriter.lua" />
+        <sourceFile filename="scripts/Telemetry.lua" />
+        <sourceFile filename="scripts/FFBEnhancer.lua" />
+    </extraSourceFiles>
+
+    <l10n filenamePrefix="translations/translation" />
+</modDesc>

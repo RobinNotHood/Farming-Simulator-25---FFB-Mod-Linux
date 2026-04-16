@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<l10n>
+    <texts>
+        <text name="ffbenhancer_title" text="FFB Enhancer" />
+        <text name="ffbenhancer_active" text="FFB Enhancer: aktiv (Daemon schreibt nach %s)" />
+        <text name="ffbenhancer_stalled" text="FFB Enhancer: Telemetriedatei wird nicht gelesen - laeuft fs25-ffb?" />
+    </texts>
+</l10n>

@@ -1,0 +1,10 @@
+icon.dds is expected here but is not committed to the repository because .dds
+binaries are awkward to maintain in git.
+
+Generate one with:
+
+    convert assets/icon.png -define dds:compression=dxt5 -resize 256x256 \
+        mod/FS25_FFBEnhancer/icon.dds
+
+Or drop any 256x256 DDS file at this path. The mod will load without an icon
+(the game falls back to a placeholder) but users won't see it in the mod list.

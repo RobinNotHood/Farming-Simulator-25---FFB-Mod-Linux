@@ -1,0 +1,21 @@
+# Rust
+daemon/target/
+daemon/Cargo.lock.local
+**/*.rs.bk
+
+# Build artifacts
+dist/
+*.zip
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime
+*.log
