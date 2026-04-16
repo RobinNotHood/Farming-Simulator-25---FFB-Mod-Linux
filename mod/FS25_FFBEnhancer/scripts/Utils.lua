@@ -5,6 +5,8 @@
 -- pcall() and fall back to a sane default.
 --
 
+print("[FFBEnhancer] Utils.lua loaded")
+
 FFBEUtils = {}
 
 -- Clamp x into [lo, hi]
