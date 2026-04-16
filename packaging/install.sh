@@ -60,6 +60,9 @@ find_fs25_mods_dir() {
 
 install_mod() {
     log "installing Lua mod into FS25 mods directory"
+    if ! command -v zip >/dev/null; then
+        fail "zip command not found. Install it: sudo pacman -S zip   (or apt/dnf equivalent)"
+    fi
     local dest
     if ! dest=$(find_fs25_mods_dir); then
         warn "No FS25 Proton prefix yet. Launch FS25 once in Steam so Proton creates it."
@@ -69,9 +72,12 @@ install_mod() {
     log "mods dir: $dest"
 
     local out="$dest/FS25_FFBEnhancer.zip"
-    # Build zip deterministically.
+    # Build zip deterministically. `set -e` will trip if zip fails.
     ( cd "$MOD_SRC/.." && zip -qr "$out" "FS25_FFBEnhancer" \
         -x "*.DS_Store" "*README*" "*.dds.README" )
+    if [[ ! -s "$out" ]]; then
+        fail "zip produced no file at $out"
+    fi
     log "wrote $out ($(du -h "$out" | awk '{print $1}'))"
 }
 
