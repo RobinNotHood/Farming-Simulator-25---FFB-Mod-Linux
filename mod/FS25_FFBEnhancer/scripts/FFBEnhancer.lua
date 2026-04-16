@@ -57,14 +57,57 @@ function FFBEnhancer:update(dt)
     if self.writer == nil then return end
     if self.rate and not self.rate() then return end
 
-    local controlled = nil
-    local ok, value = pcall(function()
-        return g_currentMission and g_currentMission.controlledVehicle or nil
-    end)
-    if ok then controlled = value end
+    local controlled, source = FFBEnhancer._findControlledVehicle()
+    if source ~= self._lastVehicleSource then
+        FFBEUtils.log("controlled vehicle source -> %s", tostring(source))
+        self._lastVehicleSource = source
+    end
 
     local telemetry = Telemetry.capture(controlled, dt / 1000.0)
     self.writer:write(telemetry)
+end
+
+-- Robust vehicle detection for FS25.
+--
+-- In FS22 the canonical access was `g_currentMission.controlledVehicle`.
+-- In FS25 GIANTS refactored the player/vehicle ownership: the bare
+-- `.controlledVehicle` field is often nil while the player is actively
+-- driving, and the live handle lives on the player entity (or on
+-- `g_localPlayer`) behind a `:getCurrentVehicle()` getter. We try every
+-- known path in order and return the first non-nil hit, along with a
+-- string identifier so the log makes it obvious which one worked.
+function FFBEnhancer._findControlledVehicle()
+    if g_currentMission == nil then
+        return nil, "no g_currentMission"
+    end
+
+    local v = g_currentMission.controlledVehicle
+    if v ~= nil then return v, "g_currentMission.controlledVehicle" end
+
+    if type(g_currentMission.getCurrentVehicle) == "function" then
+        local ok, r = pcall(g_currentMission.getCurrentVehicle, g_currentMission)
+        if ok and r ~= nil then return r, "g_currentMission:getCurrentVehicle" end
+    end
+
+    local p = g_currentMission.player
+    if p ~= nil and type(p.getCurrentVehicle) == "function" then
+        local ok, r = pcall(p.getCurrentVehicle, p)
+        if ok and r ~= nil then return r, "g_currentMission.player:getCurrentVehicle" end
+    end
+    if p ~= nil and p.currentVehicle ~= nil then
+        return p.currentVehicle, "g_currentMission.player.currentVehicle"
+    end
+
+    local lp = _G.g_localPlayer
+    if lp ~= nil and type(lp.getCurrentVehicle) == "function" then
+        local ok, r = pcall(lp.getCurrentVehicle, lp)
+        if ok and r ~= nil then return r, "g_localPlayer:getCurrentVehicle" end
+    end
+    if lp ~= nil and lp.currentVehicle ~= nil then
+        return lp.currentVehicle, "g_localPlayer.currentVehicle"
+    end
+
+    return nil, "none"
 end
 
 -- ---------------------------------------------------------------------------
