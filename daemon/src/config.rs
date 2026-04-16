@@ -45,61 +45,75 @@ pub struct TuningConfig {
 
     pub master_gain: f32,
 
-    // Centering spring
+    // Centering spring (dominant feel on tractors).
     pub spring_gain: f32,
+    /// Non-zero baseline even at 0 km/h so the wheel never goes dead. Real
+    /// tractor hydraulics have a detent-like resistance at standstill.
+    #[serde(default = "default_spring_floor")]
+    pub spring_floor: f32,
     pub speed_curve_start_kmh: f32,
     pub speed_curve_max_kmh: f32,
     pub mass_spring_scale: f32,
     pub no_power_steer_boost: f32,
 
-    // Lateral constant force
+    // Lateral constant force (secondary; gated by speed + steering input).
     pub lateral_gain: f32,
 
-    // Damper
+    // Damper (co-dominant with spring; models hydraulic weight).
     pub damper_gain: f32,
     pub implement_damper_scale: f32,
 
-    // Rumble / texture
+    // Rumble / texture (event-only; no speed-swept sine).
     pub rumble_gain: f32,
     pub idle_rumble: f32,
 
-    // Slope / roll
+    // Slope / roll (kept for future HUD; no longer drives spring_center).
     pub slope_gain: f32,
     pub slope_max: f32,
 
-    // Collision
+    // Collision one-shot gain (Lua already threshold+cooldown gates impacts).
     pub collision_gain: f32,
 
-    // Update rate cap for evdev writes
+    // Update rate cap for evdev writes.
     pub output_hz: u32,
+}
+
+fn default_spring_floor() -> f32 {
+    0.18
 }
 
 impl Default for TuningConfig {
     fn default() -> Self {
-        // Tuned for Moza R5 with FFB strength ~70% in Pit House / boxflat.
-        // Users typically raise master_gain to 1.2 for more weight.
+        // Tractor-tuned defaults for Moza R5. Damper-dominant, spring
+        // always non-zero, constant heavily gated so rough terrain doesn't
+        // "rip" the wheel. See effects::EffectEngine::compute for the
+        // formulas these values feed.
         Self {
             enabled: true,
             master_gain: 1.0,
 
-            spring_gain: 0.55,
-            speed_curve_start_kmh: 2.0,
-            speed_curve_max_kmh: 28.0,
-            mass_spring_scale: 0.25,
-            no_power_steer_boost: 1.5,
+            spring_gain: 0.65,
+            spring_floor: 0.18,
+            speed_curve_start_kmh: 5.0,
+            speed_curve_max_kmh: 22.0,
+            mass_spring_scale: 0.35,
+            no_power_steer_boost: 1.4,
 
-            lateral_gain: 0.35,
+            lateral_gain: 0.18,
 
-            damper_gain: 0.25,
-            implement_damper_scale: 0.35,
+            damper_gain: 0.55,
+            implement_damper_scale: 0.50,
 
-            rumble_gain: 0.55,
-            idle_rumble: 0.08,
+            rumble_gain: 0.25,
+            idle_rumble: 0.05,
 
-            slope_gain: 0.6,
+            // slope_center coupling is disabled in effects::compute; keep
+            // the fields around so existing configs deserialize and the
+            // values can be repurposed later.
+            slope_gain: 0.0,
             slope_max: 0.35,
 
-            collision_gain: 0.9,
+            collision_gain: 0.25,
 
             output_hz: 240,
         }
@@ -161,36 +175,36 @@ impl Config {
     }
 }
 
-/// Factory-preset profiles. Applied by the GUI "Profiles" tab.
+/// Factory-preset profiles. Applied by the GUI "Profiles" tab. Each variant
+/// layers overrides on top of the tractor-tuned `TuningConfig::default()`.
 pub fn preset(name: &str) -> Option<TuningConfig> {
     match name {
         "arcade" => Some(TuningConfig {
             master_gain: 1.1,
-            spring_gain: 0.4,
-            lateral_gain: 0.2,
-            damper_gain: 0.15,
-            rumble_gain: 0.4,
-            collision_gain: 0.6,
-            slope_gain: 0.3,
-            idle_rumble: 0.05,
+            spring_gain: 0.45,
+            spring_floor: 0.10,
+            damper_gain: 0.35,
+            lateral_gain: 0.25,
+            rumble_gain: 0.35,
+            collision_gain: 0.35,
             ..TuningConfig::default()
         }),
         "realistic" => Some(TuningConfig::default()),
         "heavy" => Some(TuningConfig {
-            spring_gain: 0.75,
-            mass_spring_scale: 0.5,
-            lateral_gain: 0.5,
-            damper_gain: 0.4,
-            implement_damper_scale: 0.6,
-            rumble_gain: 0.7,
-            collision_gain: 1.0,
-            slope_gain: 0.8,
+            spring_gain: 0.80,
+            spring_floor: 0.22,
+            mass_spring_scale: 0.50,
+            damper_gain: 0.75,
+            implement_damper_scale: 0.65,
+            lateral_gain: 0.22,
+            collision_gain: 0.40,
             ..TuningConfig::default()
         }),
         "quiet" => Some(TuningConfig {
             master_gain: 0.7,
-            spring_gain: 0.35,
-            rumble_gain: 0.2,
+            spring_gain: 0.45,
+            spring_floor: 0.12,
+            rumble_gain: 0.0,
             idle_rumble: 0.0,
             ..TuningConfig::default()
         }),

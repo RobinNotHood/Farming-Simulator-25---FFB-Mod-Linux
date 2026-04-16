@@ -99,14 +99,23 @@ function Telemetry.capture(controlledVehicle, dt)
     end
     t.speed = speed
 
+    -- Rotate world velocity into the vehicle's local frame before
+    -- differentiating. Without this, driving straight along world-X jitters
+    -- `vx` each physics step and produces spurious `lateral_accel`, which
+    -- the daemon turns into a constant force on a stationary wheel.
+    local localVx, localVz = 0, 0
+    if rootNode ~= 0 then
+        local ok, lx, _, lz = pcall(worldDirectionToLocal, rootNode, vx, vy, vz)
+        if ok then localVx, localVz = lx or 0, lz or 0 end
+    end
     if dt > 0 and lastT > 0 then
         t.longitudinal_accel = (speed - lastVel[1]) / dt
-        t.lateral_accel = (vx - lastVel[2]) / dt  -- rough; daemon smooths
+        t.lateral_accel = (localVx - lastVel[2]) / dt
     else
         t.longitudinal_accel = 0
         t.lateral_accel = 0
     end
-    lastVel = {speed, vx, vz}
+    lastVel = {speed, localVx, localVz}
     lastT = t.timestamp
 
     local yawRate = 0
@@ -223,7 +232,9 @@ function Telemetry.capture(controlledVehicle, dt)
     -- ------------------------------------------------------------------
     -- Collision one-shot (decaying)
     -- ------------------------------------------------------------------
-    collisionDecay = math.max(0, collisionDecay - dt * 3.0)
+    -- One-shot decay: ~200 ms full-to-zero so a single impact reads as a
+    -- single impact, not a 300 ms smear that overlaps the next tick.
+    collisionDecay = math.max(0, collisionDecay - dt * 5.0)
     t.collision = collisionDecay
 
     -- ------------------------------------------------------------------
@@ -249,7 +260,7 @@ function Telemetry.capture(controlledVehicle, dt)
         lastDumpedVehicle = controlledVehicle
         local okCN, cn = pcall(function() return controlledVehicle.className and controlledVehicle:className() end)
         FFBEUtils.log(
-            "vehicle: class=%s type=%s spec_drivable=%s steering=%.3f/%.3f speed=%.2f m/s mass=%.0f kg (self=%.0f) wheels=%d",
+            "vehicle: class=%s type=%s spec_drivable=%s steering=%.3f/%.3f speed=%.2f m/s mass=%.0f kg (self=%.0f) wheels=%d lat_acc=%.2f slipF-R=%.2f coll=%.2f",
             tostring(okCN and cn or "?"),
             tostring(FFBEUtils.get(controlledVehicle, "typeName", "?")),
             tostring(spec_d ~= nil),
@@ -257,7 +268,10 @@ function Telemetry.capture(controlledVehicle, dt)
             t.speed or 0,
             t.total_mass or 0,
             selfM or 0,
-            #wheels)
+            #wheels,
+            t.lateral_accel or 0,
+            (t.slip_front or 0) - (t.slip_rear or 0),
+            t.collision or 0)
     end
 
     return t

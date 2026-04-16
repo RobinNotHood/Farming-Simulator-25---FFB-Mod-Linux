@@ -53,6 +53,14 @@ pub struct FfbDevice {
     last_damper: u16,
     last_rumble_mag: u16,
     last_rumble_period: u16,
+    // Whether each effect slot is currently started. The kernel contract is
+    // "upload once with EVIOCSFF, then EV_FF start/stop events toggle the
+    // slot"; restarting on every tick causes MOZA firmware to click and
+    // stall. We therefore only emit start/stop on real 0<->nonzero edges.
+    constant_active: bool,
+    spring_active: bool,
+    damper_active: bool,
+    rumble_active: bool,
 }
 
 impl FfbDevice {
@@ -83,6 +91,10 @@ impl FfbDevice {
             last_damper: 0,
             last_rumble_mag: 0,
             last_rumble_period: 0,
+            constant_active: false,
+            spring_active: false,
+            damper_active: false,
+            rumble_active: false,
         };
 
         // Set master gain to 100%; user tunes via our own master_gain slider.
@@ -119,61 +131,105 @@ impl FfbDevice {
     }
 
     /// Push the current effect target. Called at `output_hz`.
+    ///
+    /// For each slot:
+    ///   * Update the effect parameters in place (EVIOCSFF with the same id)
+    ///     if the magnitude has meaningfully changed, or if we haven't
+    ///     started the effect yet.
+    ///   * Only emit EV_FF start/stop events on real 0<->nonzero transitions
+    ///     (tracked via the *_active flags). Restarting every frame causes
+    ///     MOZA firmware to misbehave.
     pub fn apply(&mut self, out: &EffectOutput) -> Result<()> {
+        // Constant: treat |lvl| > 200 as "active" to avoid toggling through
+        // zero on noise near the threshold.
         if let Some(id) = self.id_constant {
             let lvl = scale_to_i16(out.constant);
-            // Widen to i32 before subtracting: i16::MIN - i16::MAX wraps.
-            if (lvl as i32 - self.last_constant as i32).abs() > 150 {
+            // Widen to i32 before subtracting; i16::MIN - i16::MAX wraps.
+            let delta = (lvl as i32 - self.last_constant as i32).abs();
+            if delta > 150 || !self.constant_active {
                 self.update_constant(id, lvl, 0xFFFF)?;
-                self.start(id)?;
                 self.last_constant = lvl;
             }
+            let want_active = lvl.unsigned_abs() > 200;
+            match (self.constant_active, want_active) {
+                (false, true) => {
+                    self.start(id)?;
+                    self.constant_active = true;
+                }
+                (true, false) => {
+                    self.stop(id)?;
+                    self.constant_active = false;
+                }
+                _ => {}
+            }
         }
+
         if let Some(id) = self.id_spring {
             let s = (out.spring_strength * 0xFFFF as f32) as u16;
             let center = scale_to_i16(out.spring_center);
-            if s.abs_diff(self.last_spring) > 256 || s > 0 {
+            if s.abs_diff(self.last_spring) > 64 || !self.spring_active {
                 self.update_spring(id, s, center)?;
-                if s > 0 {
-                    self.start(id)?;
-                } else {
-                    self.stop(id)?;
-                }
                 self.last_spring = s;
             }
-        }
-        if let Some(id) = self.id_damper {
-            let d = (out.damper * 0xFFFF as f32) as u16;
-            if d.abs_diff(self.last_damper) > 256 {
-                self.update_damper(id, d)?;
-                if d > 0 {
+            match (self.spring_active, s > 0) {
+                (false, true) => {
                     self.start(id)?;
-                } else {
-                    self.stop(id)?;
+                    self.spring_active = true;
                 }
-                self.last_damper = d;
+                (true, false) => {
+                    self.stop(id)?;
+                    self.spring_active = false;
+                }
+                _ => {}
             }
         }
+
+        if let Some(id) = self.id_damper {
+            let d = (out.damper * 0xFFFF as f32) as u16;
+            if d.abs_diff(self.last_damper) > 64 || !self.damper_active {
+                self.update_damper(id, d)?;
+                self.last_damper = d;
+            }
+            match (self.damper_active, d > 0) {
+                (false, true) => {
+                    self.start(id)?;
+                    self.damper_active = true;
+                }
+                (true, false) => {
+                    self.stop(id)?;
+                    self.damper_active = false;
+                }
+                _ => {}
+            }
+        }
+
         if let Some(id) = self.id_rumble {
             let mag = (out.rumble_magnitude * 0x7FFF as f32) as u16;
             let period = out.rumble_period_ms;
-            if mag.abs_diff(self.last_rumble_mag) > 256
-                || period.abs_diff(self.last_rumble_period) > 5
-            {
+            let changed = mag.abs_diff(self.last_rumble_mag) > 128
+                || period.abs_diff(self.last_rumble_period) > 5;
+            if changed || !self.rumble_active {
                 if self.info.supports_periodic {
                     self.update_periodic(id, mag, period)?;
                 } else {
                     self.update_rumble(id, mag)?;
                 }
-                if mag > 0 {
-                    self.start(id)?;
-                } else {
-                    self.stop(id)?;
-                }
                 self.last_rumble_mag = mag;
                 self.last_rumble_period = period;
             }
+            match (self.rumble_active, mag > 0) {
+                (false, true) => {
+                    self.start(id)?;
+                    self.rumble_active = true;
+                }
+                (true, false) => {
+                    self.stop(id)?;
+                    self.rumble_active = false;
+                }
+                _ => {}
+            }
         }
+
         Ok(())
     }
 
@@ -190,6 +246,10 @@ impl FfbDevice {
         {
             let _ = self.stop(id);
         }
+        self.constant_active = false;
+        self.spring_active = false;
+        self.damper_active = false;
+        self.rumble_active = false;
         let _ = self.set_gain(0xFFFF);
         Ok(())
     }

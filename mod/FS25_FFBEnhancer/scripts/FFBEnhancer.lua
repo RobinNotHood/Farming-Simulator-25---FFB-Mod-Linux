@@ -152,14 +152,29 @@ else
     print(string.format("[FFBEnhancer] %d mission hook(s) registered", hookCount))
 end
 
--- Wire collisions into the telemetry one-shot.
+-- Wire collisions into the telemetry one-shot. FS25's high-resolution
+-- collider fires onCollision for every ground contact (500-1000 N impulses
+-- per rolling wheel), which the old handler turned into a continuous
+-- baseline constant force. Filter to real impacts only:
+--   * impulse must exceed COLLISION_IMPULSE_MIN (ignore ground noise)
+--   * cooldown of COLLISION_COOLDOWN_S between kicks (one-shot, not smear)
+local COLLISION_IMPULSE_MIN = 2000   -- N*s
+local COLLISION_COOLDOWN_S  = 0.15
+local _lastCollisionAt = 0
 if Vehicle ~= nil and Vehicle.onCollision ~= nil then
     local oldCollision = Vehicle.onCollision
     Vehicle.onCollision = function(self, transformId1, transformId2, contactNormal, impulse, ...)
-        if impulse ~= nil then
-            Telemetry.onCollision(math.min(impulse / 5000.0, 1.0))
+        local now = FFBEUtils.now()
+        if type(impulse) == "number"
+           and impulse >= COLLISION_IMPULSE_MIN
+           and (now - _lastCollisionAt) >= COLLISION_COOLDOWN_S then
+            _lastCollisionAt = now
+            local mag = math.min((impulse - COLLISION_IMPULSE_MIN) / 8000.0, 1.0)
+            Telemetry.onCollision(mag)
         end
         return oldCollision(self, transformId1, transformId2, contactNormal, impulse, ...)
     end
-    print("[FFBEnhancer] hooked Vehicle.onCollision")
+    print(string.format(
+        "[FFBEnhancer] hooked Vehicle.onCollision (threshold %d N*s, cooldown %.0f ms)",
+        COLLISION_IMPULSE_MIN, COLLISION_COOLDOWN_S * 1000))
 end
